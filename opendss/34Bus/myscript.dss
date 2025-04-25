@@ -1,0 +1,14 @@
+Compile ieee34Mod1.dss
+
+! Force Regulator Transformer taps
+Transformer.reg1a.wdg=2 Tap=(0.00625  12  * 1 +)   ! Tap 12
+Transformer.reg1b.wdg=2 Tap=(0.00625   5 * 1 +)    ! Tap 5
+Transformer.reg1c.wdg=2 Tap=(0.00625   5  * 1 +)   ! Tap 5
+Transformer.reg2a.wdg=2 Tap=(0.00625  13 * 1 +)    ! Tap 13
+Transformer.reg2b.wdg=2 Tap=(0.00625  11 * 1 +)    ! Tap 11
+Transformer.reg2c.wdg=2 Tap=(0.00625  12 * 1 +)    ! Tap 12
+
+Set Controlmode=OFF  ! prevents further tap changes
+
+solve
+

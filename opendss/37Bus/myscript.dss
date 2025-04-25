@@ -1,0 +1,6 @@
+Compile ieee37.dss
+
+Set Controlmode=OFF  ! prevents further tap changes
+
+solve
+

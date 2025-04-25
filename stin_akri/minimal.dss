@@ -1,7 +1,0 @@
-Clear
-New Circuit.Minimal basekv=1 pu=1 phases=1 bus1=sourceBus
-New Line.line1 bus1=sourceBus bus2=loadBus phases=1 length=1 units=km r1=0.1 x1=0.2 c1=0
-! New Load.load1 bus1=loadBus phases=1 conn=wye kv=1 kw=100 kvar=50
-Set voltagebases=[1]
-CalcVoltageBases
-Solve
