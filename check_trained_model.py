@@ -1,8 +1,10 @@
 import torch
-import torch.nn as nn
 import pandas as pd
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+
+from model import FlexiblePINN
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -27,29 +29,10 @@ def load_data_with_currents(directory):
     return S, V_true, I_true, Ybus
 
 
-class FlexiblePINN(nn.Module):
-    def __init__(self, num_buses):
-        super().__init__()
-        self.model = nn.Sequential(
-            nn.Linear(2 * num_buses, 256),
-            nn.Tanh(),
-            nn.Linear(256, 256),
-            nn.Tanh(),
-            nn.Linear(256, 2 * num_buses),
-        )
-
-    def forward(self, S):
-        x = torch.cat([S.real, S.imag], dim=1)
-        out = self.model(x)
-        V_mag = out[:, :num_buses]
-        V_ang = out[:, num_buses:]
-        return V_mag, V_ang
-
-
 if __name__ == "__main__":
     torch.manual_seed(42)
 
-    network = "37Bus"
+    network = "13Bus"
 
     data_dir = "data/" + network
     results_dir = "results/" + network

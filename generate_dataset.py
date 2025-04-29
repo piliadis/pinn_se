@@ -6,15 +6,15 @@ import os
 import random
 from scipy.sparse import csc_matrix
 
-network = "37Bus"
+network = "34Bus"
 
 # se kathe fakelo exw ena myscript.dss pou kleinw tous tap changers.
 dss_file = "opendss/" + network + "/myscript.dss"
 
-num_runs = 10000
+num_runs = 1000
 variation_low, variation_high = 0.8, 1.2
 initial_dir = os.getcwd()
-output_dir = "data/" + network
+output_dir = "data_eval/" + network
 
 # ~~~~~~~~~~~~~~~~~~~~ GET Y ~~~~~~~~~~~~~~~~~~~~~
 dss.Command("Clear")
