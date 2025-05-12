@@ -1,0 +1,46 @@
+! 6-node distribution system (1 substation + 5 nodes)
+! With non-symmetrical single-phase loads at 240V
+
+Clear
+
+! Set the base frequency
+Set DefaultBaseFrequency=60
+
+! Define the voltage source (substation)
+New Circuit.6NodeSystem
+~ basekv=0.240 pu=1.0 phases=3 bus1=sourcebus
+~ Angle=0 MVAsc3=20 MVAsc1=21
+
+! Define Linecodes for low voltage distribution
+New LineCode.3PhaseLV nphases=3 R1=0.6 X1=0.08 R0=1.2 X0=0.2 C1=5 C0=2 units=kft
+
+! Define Lines - connecting each node to the substation (shorter distances for LV)
+New Line.Line1 phases=3 bus1=sourcebus bus2=node1 linecode=3PhaseLV length=0.2 units=kft
+New Line.Line2 phases=3 bus1=sourcebus bus2=node2 linecode=3PhaseLV length=0.3 units=kft
+New Line.Line3 phases=3 bus1=sourcebus bus2=node3 linecode=3PhaseLV length=0.25 units=kft
+New Line.Line4 phases=3 bus1=sourcebus bus2=node4 linecode=3PhaseLV length=0.35 units=kft
+New Line.Line5 phases=3 bus1=sourcebus bus2=node5 linecode=3PhaseLV length=0.4 units=kft
+
+! Define single-phase loads on different phases
+! Using kW and power factor (PF) to define loads - scaled for 240V system
+
+! Node 1 - Phase A load
+New Load.Load1 phases=1 bus1=node1.1 kv=0.240 kw=3.5 pf=0.92 model=1
+
+! Node 2 - Phase B load
+New Load.Load2 phases=1 bus1=node2.2 kv=0.240 kw=4.2 pf=0.88 model=1
+
+! Node 3 - Phase C load
+New Load.Load3 phases=1 bus1=node3.3 kv=0.240 kw=2.8 pf=0.9 model=1
+
+! Node 4 - Phase A load
+New Load.Load4 phases=1 bus1=node4.1 kv=0.240 kw=3.8 pf=0.95 model=1
+
+! Node 5 - Phase B load
+New Load.Load5 phases=1 bus1=node5.2 kv=0.240 kw=4.0 pf=0.85 model=1
+
+! Set the control mode to OFF to prevent tap changes
+Set Controlmode=OFF
+
+! Solve the power flow
+Solve

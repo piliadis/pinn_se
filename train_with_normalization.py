@@ -98,8 +98,8 @@ if __name__ == "__main__":
 
     # Normalize data (except Y_bus)
     S_norm, S_min, S_max = normalize_complex(S)
+    # breakpoint()
     V_true_norm, V_min, V_max = normalize_complex(V_true)
-    
     # Save normalization parameters
     V_norm_params = (V_min, V_max)
 
@@ -139,6 +139,13 @@ if __name__ == "__main__":
         # if (epoch + 1) % adjustment_epochs == 0:
         #     lambda_1 = max(0.5, lambda_1 - adjustment_step)
         #     lambda_2 = min(0.5, lambda_2 + adjustment_step)
+        if curr_loss < 1_000:
+            lambda_2 = 0.001
+            lambda_1 = 1 - lambda_2
+        else:
+            lambda_2 = 0.0
+            lambda_1 = 1
+
 
         # Logging
         if epoch % 500 == 0 or epoch == epochs - 1:
