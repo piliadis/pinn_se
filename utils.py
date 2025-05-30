@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
+import pandas as pd
+import os
 
 
 def plot_heatmap(A):
@@ -50,35 +52,53 @@ def plot_2_heatmaps(A, B, title_A="A", title_B="B"):
     plt.show()
 
 
-def zscore_normalize_complex(x: torch.Tensor, eps: float = 1e-12):
+def zscore_normalize_complex(
+    x: torch.Tensor,
+    eps: float = 1e-12,
+    mean_real: torch.Tensor = None,
+    std_real: torch.Tensor = None,
+    mean_imag: torch.Tensor = None,
+    std_imag: torch.Tensor = None,
+):
     """
-    Normalise a complex tensor position-wise, with independent μ/σ
-    for the real and the imaginary channel.
+    Normalize a complex tensor position-wise using z-score normalization.
+
+    If mean/std are provided, they are used directly.
+    Otherwise, they are computed from the input tensor.
 
     Args
     ----
-    x   : complex tensor  [batch, …]
-    eps : small constant to avoid division by zero
+    x         : complex tensor [batch, …]
+    eps       : small constant to avoid division by zero
+    mean_real : optional real tensor [1, …]
+    std_real  : optional real tensor [1, …]
+    mean_imag : optional real tensor [1, …]
+    std_imag  : optional real tensor [1, …]
 
     Returns
     -------
-    x_norm         : normalised complex tensor  [batch, …]
-    mean_real/imag : real tensors [1, …]  (broadcastable statistics)
+    x_norm         : normalized complex tensor [batch, …]
+    mean_real/imag : real tensors [1, …]
     std_real/imag  : real tensors [1, …]
     """
     x_real = x.real
     x_imag = x.imag
 
-    mean_real = x_real.mean(dim=0, keepdim=True)
-    std_real = x_real.std(dim=0, keepdim=True, unbiased=False) + eps
+    if mean_real is None:
+        mean_real = x_real.mean(dim=0, keepdim=True)
+    if std_real is None:
+        std_real = x_real.std(dim=0, keepdim=True, unbiased=False) + eps
 
-    mean_imag = x_imag.mean(dim=0, keepdim=True)
-    std_imag = x_imag.std(dim=0, keepdim=True, unbiased=False) + eps
+    if mean_imag is None:
+        mean_imag = x_imag.mean(dim=0, keepdim=True)
+    if std_imag is None:
+        std_imag = x_imag.std(dim=0, keepdim=True, unbiased=False) + eps
 
     x_norm = torch.complex(
         (x_real - mean_real) / std_real,
         (x_imag - mean_imag) / std_imag,
     )
+
     return x_norm, mean_real, std_real, mean_imag, std_imag
 
 
@@ -95,4 +115,85 @@ def zscore_denormalize_complex(
     return torch.complex(
         x_norm.real * std_real + mean_real,
         x_norm.imag * std_imag + mean_imag,
+    )
+
+
+def load_data(directory):
+    P = torch.tensor(pd.read_csv(f"{directory}/S_real.csv").values, dtype=torch.float64)
+    Q = torch.tensor(pd.read_csv(f"{directory}/S_imag.csv").values, dtype=torch.float64)
+    V_real = torch.tensor(
+        pd.read_csv(f"{directory}/V_real.csv").values, dtype=torch.float64
+    )
+    V_imag = torch.tensor(
+        pd.read_csv(f"{directory}/V_imag.csv").values, dtype=torch.float64
+    )
+    Y_real = torch.tensor(
+        pd.read_csv(f"{directory}/Y_real.csv", header=None).values, dtype=torch.float64
+    )
+    Y_imag = torch.tensor(
+        pd.read_csv(f"{directory}/Y_imag.csv", header=None).values, dtype=torch.float64
+    )
+    I_real = torch.tensor(
+        pd.read_csv(f"{directory}/I_real.csv").values, dtype=torch.float64
+    )
+    I_imag = torch.tensor(
+        pd.read_csv(f"{directory}/I_imag.csv").values, dtype=torch.float64
+    )
+
+    S = torch.complex(P, Q)  # shape: [N, buses]
+    V_true = torch.complex(V_real, V_imag)  # shape: [N, buses]
+    I_true = torch.complex(I_real, I_imag)  # shape: [N, buses]
+    Ybus = torch.complex(Y_real, Y_imag)  # shape: [buses, buses]
+
+    # ~~~~~~~~~~~~~~~  check data ~~~~~~~~~~~~~~~
+    # I_calc = torch.matmul(V_true, Ybus)  # shape: [N, buses]
+    # I_calc = torch.matmul(Ybus, V_true.T).T  # NOTE: to idio
+    I_calc = torch.conj(S / V_true)
+    err1 = torch.mean(torch.abs(I_true - I_calc), axis=1)  # shape: [N]
+    assert torch.all(
+        err1 < 1e-1
+    ), f"Mismatches found! Max error = {torch.max(err1):.8f}"
+    S_calc = V_true * torch.conj(
+        I_calc
+    )  # element-wise complex power, shape: [N, buses]
+    err = torch.mean(torch.abs(S - S_calc), dim=1)  # shape: [N]
+    assert torch.all(
+        err < 1e-1
+    ), f"Mismatches found! Max error = {torch.max(err).item():.8f}"
+
+    return S, V_true, I_true, Ybus
+
+
+def save_complex_tensor(tensor: torch.Tensor, filename_prefix: str, output_dir: str):
+    """
+    Saves a complex tensor in two formats:
+    - CSV files with real and imaginary parts separately
+    - PyTorch .pt file
+
+    Args:
+        tensor (torch.Tensor): Complex tensor of shape [samples, features]
+        filename_prefix (str): Base name (e.g. "V_pred_phys")
+        output_dir (str): Directory where files are saved
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    tensor = tensor.detach().cpu()
+
+    # Save real/imag CSV
+    real_df = pd.DataFrame(
+        tensor.real.numpy(),
+        columns=[f"{filename_prefix}_re_{i}" for i in range(tensor.shape[1])],
+    )
+    imag_df = pd.DataFrame(
+        tensor.imag.numpy(),
+        columns=[f"{filename_prefix}_im_{i}" for i in range(tensor.shape[1])],
+    )
+
+    real_df.to_csv(os.path.join(output_dir, f"{filename_prefix}_real.csv"), index=False)
+    imag_df.to_csv(os.path.join(output_dir, f"{filename_prefix}_imag.csv"), index=False)
+
+    # Save as .pt file
+    torch.save(tensor, os.path.join(output_dir, f"{filename_prefix}.pt"))
+
+    print(
+        f"Saved: {filename_prefix}_real.csv, {filename_prefix}_imag.csv, and {filename_prefix}.pt to {output_dir}"
     )

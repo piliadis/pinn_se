@@ -2,159 +2,211 @@ import torch
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
-import torch.nn.functional as F
+from datetime import datetime
+import json
 
+from utils import (
+    load_data,
+    zscore_normalize_complex,
+    zscore_denormalize_complex,
+    save_complex_tensor,
+)
 from model import FlexiblePINN
 
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
-
-
-def load_data(directory):
-    P = pd.read_csv(f"{directory}/S_real.csv").values
-    Q = pd.read_csv(f"{directory}/S_imag.csv").values
-    V_real = pd.read_csv(f"{directory}/V_real.csv").values
-    V_imag = pd.read_csv(f"{directory}/V_imag.csv").values
-    I_real = pd.read_csv(f"{directory}/I_real.csv").values
-    I_imag = pd.read_csv(f"{directory}/I_imag.csv").values
-    Y_real = pd.read_csv(f"{directory}/Y_real.csv", header=None).values
-    Y_imag = pd.read_csv(f"{directory}/Y_imag.csv", header=None).values
-
-    S = torch.tensor(P + 1j * Q, dtype=torch.cfloat, device=device)
-    Ybus = torch.tensor(Y_real + 1j * Y_imag, dtype=torch.cfloat, device=device)
-    V_true = torch.tensor(V_real + 1j * V_imag, dtype=torch.cfloat, device=device)
-    I_true = torch.tensor(I_real + 1j * I_imag, dtype=torch.cfloat, device=device)
-
-    return S, V_true, I_true, Ybus
+# at 1st epoch, volt_loss_norm ~ 2 while curr_loss ~7.5m
+# volt_loss is normalized, curr_loss is notW
+CONFIG = {
+    "network": "13Bus",
+    "epochs": 2000,
+    "learning_rate": 0.01,
+    "scheduler_patience": 20,
+    "scheduler_factor": 0.5,
+    "lambda_1_init": 1,
+    "lambda_2_init": 0.01,
+    "adjustment_step": 0,
+    "adjustment_epochs": 500,
+    "run_id": datetime.now().strftime("%Y%m%d_%H%M%S"),
+    "seed": 42,
+}
 
 
-def pinn_loss(V_pred, V_true, I_true, Ybus, lambda_1=1.0, lambda_2=1.0):
-    # Voltage MSE Loss (u)
-    voltage_mse = torch.mean(torch.abs(V_pred - V_true) ** 2)
-    # voltage_mse_norm = voltage_mse / torch.max(torch.abs(V_pred - V_true) ** 2)
-
-    # Current MAE Loss (f)
-    I_pred = torch.matmul(Ybus, V_pred.T).T
-    current_mae = torch.mean(torch.abs(I_pred - I_true))
-    # current_mae_norm = current_mae / torch.max(torch.abs(I_pred - I_true))
-
-    # Combined loss
-    total_loss = lambda_1 * voltage_mse + lambda_2 * current_mae
-    # total_loss = lambda_1 * voltage_mse_norm + lambda_2 * current_mae_norm
-
-    return total_loss, voltage_mse, current_mae
+def setup_device():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    return device
 
 
-if __name__ == "__main__":
-    torch.manual_seed(42)
-
-    network = "123Bus"
-
-    data_dir = "data/" + network
-    results_dir = "results/" + network
-    os.makedirs(results_dir, exist_ok=True)
-
-    S, V_true, I_true, Ybus = load_data(data_dir)
-
-    num_samples, num_buses = S.shape
-    model = FlexiblePINN(num_buses).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-1)
+def initialize_model(num_buses, device):
+    model = FlexiblePINN(num_buses).to(device).to(torch.float64)
+    optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["learning_rate"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=500, factor=0.5
+        optimizer,
+        patience=CONFIG["scheduler_patience"],
+        factor=CONFIG["scheduler_factor"],
     )
+    return model, optimizer, scheduler
 
-    epochs = 10000
 
-    # Initial weights for loss terms
-    lambda_1, lambda_2 = 1.0, 0.0
-    adjustment_step = 0.01
-    adjustment_epochs = 200
+def train(
+    model,
+    optimizer,
+    scheduler,
+    S_norm,
+    V_true,
+    V_true_norm,
+    I_true,
+    Ybus,
+    device,
+    results_dir,
+):
+    lambda_1, lambda_2 = CONFIG["lambda_1_init"], CONFIG["lambda_2_init"]
 
-    epoch_log, total_loss_log, voltage_loss_log, current_loss_log = [], [], [], []
+    # Logging
+    logs = {
+        "Epoch": [],
+        "Total Loss": [],
+        "Voltage Loss norm": [],
+        "Voltage Loss SI": [],
+        "Current Loss SI": [],
+        "Lambda 1": [],
+        "Lambda 2": [],
+        "Learning Rate": [],
+    }
 
-    for epoch in range(epochs):
+    for epoch in range(CONFIG["epochs"]):
         model.train()
-        V_mag_pred, V_ang_pred = model(S)
-        V_pred = V_mag_pred + 1j * V_ang_pred
+        V_re_pred_norm, V_im_pred_norm = model(S_norm)
+        V_pred_norm = torch.complex(V_re_pred_norm, V_im_pred_norm)
 
-        total_loss, volt_loss, curr_loss = pinn_loss(
-            V_pred, V_true, I_true, Ybus, lambda_1=lambda_1, lambda_2=lambda_2
-        )
+        volt_loss_norm = torch.mean(torch.abs(V_pred_norm - V_true_norm) ** 2)
+
+        V_pred_phys = zscore_denormalize_complex(V_pred_norm, *V_norm_params)
+        volt_loss = torch.mean(torch.abs(V_pred_phys - V_true) ** 2)
+
+        I_pred = torch.matmul(Ybus, V_pred_phys.T).T
+        curr_loss = torch.mean(torch.abs(I_pred - I_true))
+
+        total_loss = lambda_1 * volt_loss_norm + lambda_2 * curr_loss
 
         optimizer.zero_grad()
         total_loss.backward()
         optimizer.step()
         scheduler.step(total_loss)
 
-        # Adjust lambda weights every 500 epochs clearly
-        if (epoch + 1) % adjustment_epochs == 0:
-            lambda_1 = max(0.5, lambda_1 - adjustment_step)
-            lambda_2 = min(0.5, lambda_2 + adjustment_step)
+        if epoch % 1000 == 0 and epoch > 0:
+            breakpoint()
 
-        # Clear reporting of λ1 and λ2 values during training
-        if epoch % 500 == 0 or epoch == epochs - 1:
-            print(
-                f"Epoch {epoch}: Total Loss={total_loss.detach().item():.8f}, "
-                f"Voltage Loss={volt_loss.item():.8f}, Current Loss={curr_loss.item():.8f}, "
-                f'λ1={lambda_1:.2f}, λ2={lambda_2:.2f}, LR={optimizer.param_groups[0]["lr"]:.8f}'
-            )
-            epoch_log.append(epoch)
-            total_loss_log.append(total_loss.item())
-            voltage_loss_log.append(volt_loss.item())
-            current_loss_log.append(curr_loss.item())
+        # Adjust loss weights
+        if (epoch + 1) == CONFIG["adjustment_epochs"]:  # == 0:
+            lambda_1 = max(0.5, lambda_1 - CONFIG["adjustment_step"])
+            lambda_2 = min(0.5, lambda_2 + CONFIG["adjustment_step"])
 
-    # Final evaluation
-    V_mag_final, V_ang_final = model(S)
-    V_final_pred = V_mag_final + 1j * V_ang_final
-    total_loss, volt_loss, curr_loss = pinn_loss(
-        V_final_pred, V_true, I_true, Ybus, lambda_1=lambda_1, lambda_2=lambda_2
-    )
+        # Logging
+        logs["Epoch"].append(epoch)
+        logs["Total Loss"].append(total_loss.item())
+        logs["Voltage Loss norm"].append(volt_loss_norm.item())
+        logs["Voltage Loss SI"].append(volt_loss.item())
+        logs["Current Loss SI"].append(curr_loss.item())
+        logs["Lambda 1"].append(lambda_1)
+        logs["Lambda 2"].append(lambda_2)
+        logs["Learning Rate"].append(optimizer.param_groups[0]["lr"])
 
-    print(f"Final Total Loss: {total_loss.item():.8f}")
-    print(f"Final Voltage Loss: {volt_loss.item():.8f}")
-    print(f"Final Current Loss: {curr_loss.item():.8f}")
+        print(
+            f"Epoch {epoch:04d}: Total={total_loss.item():.6f}, "
+            f"Vnorm={volt_loss_norm.item():.6f}, VSI={volt_loss.item():.6f}, "
+            f"ISI={curr_loss.item():.6f}, λ1={lambda_1:.3f}, λ2={lambda_2:.3f}, "
+            f"LR={optimizer.param_groups[0]['lr']:.8f}"
+        )
 
-    # Save final model explicitly
-    torch.save(model.state_dict(), f"{results_dir}/pinn_model{adjustment_step}.pth")
-    print("Model saved as pinn_model.pth")
+    return logs
 
-    # Save logs to CSV
-    logs = pd.DataFrame(
-        {
-            "Epoch": epoch_log,
-            "Total Loss": total_loss_log,
-            "Voltage Loss": voltage_loss_log,
-            "Current Loss": current_loss_log,
-        }
-    )
-    logs.to_csv(f"{results_dir}/loss_logs{adjustment_step}.csv", index=False)
 
-    # Plot the error curves
+def plot_logs(logs, save_path):
     plt.figure(figsize=(10, 5))
-    plt.plot(epoch_log[1:], total_loss_log[1:], label="Total Loss", linewidth=2)
+    plt.plot(logs["Epoch"][1:], logs["Total Loss"][1:], label="Total Loss")
     plt.plot(
-        epoch_log[1:],
-        voltage_loss_log[1:],
-        label="Normalized Voltage MSE (u)",
-        linewidth=2,
+        logs["Epoch"][1:], logs["Voltage Loss norm"][1:], label="Voltage MSE (norm)"
     )
-    plt.plot(
-        epoch_log[1:],
-        current_loss_log[1:],
-        label="Normalized Current MAE (f)",
-        linewidth=2,
-    )
-    plt.xlabel("Epochs")
-    plt.ylabel("Normalized Error")
-    plt.title("Voltage and Current Errors During Training")
+    plt.plot(logs["Epoch"][1:], logs["Current Loss SI"][1:], label="Current MAE (SI)")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training Losses")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(f"{results_dir}/error_curves{adjustment_step}.png")
-    plt.show()
+    plt.savefig(save_path)
+    plt.close()
 
-    print(V_mag_final[0])
-    print(V_true.real[0])
 
-    breakpoint()
+if __name__ == "__main__":
+    torch.manual_seed(CONFIG["seed"])
+    device = setup_device()
+
+    network = CONFIG["network"]
+    data_dir = f"data/{network}"
+    results_dir = f"results/{network}/run_{CONFIG['run_id']}"
+
+    S, V_true, I_true, Ybus = load_data(data_dir)
+    S, V_true, I_true, Ybus = [x.to(device) for x in (S, V_true, I_true, Ybus)]
+
+    V_true_norm, *V_norm_params = zscore_normalize_complex(V_true)
+    # I_true_norm, *_ = zscore_normalize_complex(I_true)
+    S_norm, *S_norm_params = zscore_normalize_complex(S)
+
+    num_samples, num_buses = S.shape
+    model, optimizer, scheduler = initialize_model(num_buses, device)
+
+    logs = train(
+        model,
+        optimizer,
+        scheduler,
+        S_norm,
+        V_true,
+        V_true_norm,
+        I_true,
+        Ybus,
+        device,
+        results_dir,
+    )
+
+    os.makedirs(results_dir, exist_ok=True)
+
+    # Save model and logs
+    torch.save(model.state_dict(), os.path.join(results_dir, "model.pth"))
+    normalization_params = {
+        "V_mu_re": V_norm_params[0].cpu(),
+        "V_sigma_re": V_norm_params[1].cpu(),
+        "V_mu_im": V_norm_params[2].cpu(),
+        "V_sigma_im": V_norm_params[3].cpu(),
+        "S_mu_re": S_norm_params[0].cpu(),
+        "S_sigma_re": S_norm_params[1].cpu(),
+        "S_mu_im": S_norm_params[2].cpu(),
+        "S_sigma_im": S_norm_params[3].cpu(),
+    }
+    torch.save(
+        normalization_params, os.path.join(results_dir, "normalization_params.pt")
+    )
+
+    pd.DataFrame(logs).to_csv(
+        os.path.join(results_dir, "training_logs.csv"), index=False
+    )
+    plot_logs(logs, os.path.join(results_dir, "loss_plot.png"))
+
+    CONFIG["Voltage Loss SI"] = logs["Voltage Loss SI"][-1]
+    CONFIG["Current Loss SI"] = logs["Current Loss SI"][-1]
+
+    # Save config
+    with open(os.path.join(results_dir, "config.json"), "w") as f:
+        json.dump(CONFIG, f, indent=4)
+
+    # Final evaluation
+    V_re_pred_norm_final, V_im_pred_norm_final = model(S_norm)
+    V_pred_norm_final = torch.complex(V_re_pred_norm_final, V_im_pred_norm_final)
+
+    V_pred_phys = zscore_denormalize_complex(V_pred_norm_final, *V_norm_params)
+    I_pred = torch.matmul(Ybus, V_pred_phys.T).T
+
+    save_complex_tensor(V_pred_phys, "V_pred", results_dir)
+    save_complex_tensor(I_pred, "I_pred", results_dir)
+
+    print(f"Results saved in {results_dir}")

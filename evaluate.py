@@ -5,7 +5,10 @@ import matplotlib.pyplot as plt
 import os
 
 from model import FlexiblePINN
-from train import load_data, pinn_loss
+from train import load_data, zscore_normalize_complex, zscore_denormalize_complex
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
 
 def compute_metrics(V_pred, V_true):
@@ -79,16 +82,12 @@ def randomly_mask_S(S, dropout_rate=0.2):
     return S_masked
 
 
-def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+if __name__ == "__main__":
+    network = "13Bus"
+    run = "run_20240530_092500"
 
-    # === PARAMETERS ===
-    network = "13Bus"  # Change accordingly
-    model_filename = "pinn_model0.01.pth"  # Adjust if needed
-
-    val_data_dir = f"data_eval/{network}"
-    model_path = f"results/{network}/{model_filename}"
+    val_data_dir = f"data/{network}"
+    model_path = f"results/{network}/{run}/model.pth"
     evaluation_results_dir = f"results/{network}/evaluation"
 
     # === Load Validation Data ===
@@ -116,9 +115,15 @@ def main():
     model.load_state_dict(torch.load(model_path))
     model.eval()
 
+    normalization_params = torch.load(
+        f"results/{network}/{run}/normalization_params.pt"
+    )
+
+    V_true_norm, *V_norm_params = zscore_normalize_complex(V_true_val, *V_norm_params)
+
     # === Predict and Evaluate ===
     with torch.no_grad():
-        V_mag_pred, V_ang_pred = model(S_val1)
+        V_re_pred_norm, V_ang_pred = model(S_val1)
         V_pred = V_mag_pred + 1j * V_ang_pred
 
         breakpoint()
@@ -172,7 +177,3 @@ def main():
     plot_error_histograms(V_pred, V_true_val, evaluation_results_dir)
 
     breakpoint()
-
-
-if __name__ == "__main__":
-    main()

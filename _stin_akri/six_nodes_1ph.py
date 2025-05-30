@@ -22,6 +22,29 @@ V_imag = pd.read_csv(f"{directory}/V_imag.csv").values
 Y_real = pd.read_csv(f"{directory}/Y_real.csv", header=None).values
 Y_imag = pd.read_csv(f"{directory}/Y_imag.csv", header=None).values
 
+
+def add_noise(array, noise_level=0.01, mode="uniform"):
+    """
+    Add noise to a NumPy array.
+
+    Parameters:
+    - array: np.ndarray (can be real or complex)
+    - noise_level: float, relative noise level
+    - mode: 'uniform' or 'gaussian'
+
+    Returns:
+    - noisy_array: np.ndarray of same shape and type
+    """
+    if mode == "uniform":
+        noise = np.random.uniform(-noise_level, noise_level, size=array.shape) * array
+    elif mode == "gaussian":
+        noise = np.random.randn(*array.shape) * noise_level * array
+    else:
+        raise ValueError("Unsupported mode. Use 'uniform' or 'gaussian'.")
+    noisy_array = array + noise
+    return noisy_array
+
+
 # S = P + 1j * Q
 # Ybus = Y_real + 1j * Y_imag
 V_true = V_real + 1j * V_imag
@@ -34,6 +57,12 @@ P_3ph = (P / S_base).T
 Q_3ph = (Q / S_base).T
 # P_3ph = (np.abs(P) / S_base).T
 # Q_3ph = (np.abs(Q) / S_base).T
+
+Vmag_pu = add_noise(Vmag_pu, noise_level=0.001, mode="uniform")  # NOTE: NOPE!!!
+# P_3ph = add_noise(P_3ph, noise_level=0.1, mode="uniform")  # NOTE: den exou simasia
+# Q_3ph = add_noise(Q_3ph, noise_level=0.1, mode="uniform")
+
+# breakpoint()
 
 # Step 5: estimate admittance
 delta_V = Vmag_pu - 1
@@ -48,8 +77,8 @@ N = P_3ph.shape[0]
 # breakpoint()
 # plot_heatmap(G_hat)
 # plot_heatmap(B_hat)
-plot_2_heatmaps(Y_real, G_hat)
-plot_2_heatmaps(Y_imag, B_hat)
+# plot_2_heatmaps(Y_real, G_hat)
+# plot_2_heatmaps(Y_imag, B_hat)
 
 # === Clean G_hat and B_hat ===
 # Force symmetry keeping zero entries
@@ -96,7 +125,7 @@ for i in range(N):
     G_hat[i, i] = -np.sum(G_hat[i, :]) + G_hat[i, i]
     B_hat[i, i] = -np.sum(B_hat[i, :]) + B_hat[i, i]
 
-plot_2_heatmaps(Y_real, G_hat)
-plot_2_heatmaps(Y_imag, B_hat)
+plot_2_heatmaps(Y_real, G_hat, title_A="G_real", title_B="G_hat")
+plot_2_heatmaps(Y_imag, B_hat, title_A="B_real", title_B="B_hat")
 # plot_heatmap(G_hat)
 # plot_heatmap(B_hat)
