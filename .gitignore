@@ -16,4 +16,6 @@ venv.bak/
 .vscode/
 
 data
+data_eval
+results
 .conda

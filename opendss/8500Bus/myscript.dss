@@ -1,0 +1,19 @@
+Compile Run_8500Node_Unbal.dss
+
+! Force Regulator Transformer taps
+Transformer.VREG2_A.Taps=[1.0 1.0]
+Transformer.VREG2_B.Taps=[1.0 1.0]
+Transformer.VREG2_C.Taps=[1.0 1.0]
+
+Transformer.VREG3_A.Taps=[1.0 1.0]
+Transformer.VREG3_B.Taps=[1.0 1.0]
+Transformer.VREG3_C.Taps=[1.0 1.0]
+
+Transformer.VREG4_A.Taps=[1.0 1.0]
+Transformer.VREG4_B.Taps=[1.0 1.0]
+Transformer.VREG4_C.Taps=[1.0 1.0]
+
+Set Controlmode=OFF  ! prevents further tap changes
+
+solve
+
